@@ -485,6 +485,7 @@ def update_local_documents(
                                             flname,
                                             dlurl,
                                         )
+                                        urlretrieve(dlurl, flname)
                 reg_dictionary["last_download_date"] = datetime.now()
             elif reg_abbrev == "DFARSPGI":
                 for tablerow in tablerows:
@@ -516,6 +517,7 @@ def update_local_documents(
                                             flname,
                                             dlurl,
                                         )
+                                        urlretrieve(dlurl, flname)
                 reg_dictionary["last_download_date"] = datetime.now()
             elif reg_abbrev == "DAFFARSMP":
                 for tablerow in tablerows:
@@ -545,6 +547,7 @@ def update_local_documents(
                                             flname,
                                             dlurl,
                                         )
+                                        urlretrieve(dlurl, flname)
                 reg_dictionary["last_download_date"] = datetime.now()
         else:
             logger.debug(
