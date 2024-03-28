@@ -9,8 +9,10 @@ import os
 from configparser import ConfigParser
 from configparser import Error as ConfigParserError
 import logging
-from urllib.request import Request, urlretrieve, urlopen
+from urllib.request import urlretrieve
+from urllib.parse import urljoin
 import re
+import csv
 
 # Imports - Third Party
 from bs4 import BeautifulSoup
@@ -23,7 +25,7 @@ logging.basicConfig(level=logging.DEBUG) # REMOVE ME LATER
 logger = logging.getLogger(__name__)
 
 
-def download_documents() -> None:
+def download_documents_index() -> None:
     """US Gov. Doc Retriever
 
     Goes to the Acquisition website, and downloads the latest copies
@@ -84,14 +86,66 @@ def download_documents() -> None:
         # logger.debug(reg_section)
         links = reg_section.find_all("a", {'title':True})
         regulation_links += links
-    print(regulation_links)
-    print(len(regulation_links))
+    # print(regulation_links)
+    # print(len(regulation_links))
 
+    regulation_dict = {}
+
+    # have a list of a hrefs...
+    for regulation_link in links:
+        regulation_dict_entry = {
+            'href': urljoin(regulation_base_url, regulation_link['href']),
+            'title': regulation_link['title'].strip(),
+            'directory': os.path.join(
+                os.path.abspath(regulation_storage_path), 
+                regulation_link['href'][1:]
+            ),
+            'abbreviation': regulation_link.text
+        }
+        regulation_dict[regulation_link.text] = regulation_dict_entry
+        os.makedirs(regulation_dict_entry['directory'], exist_ok=True)
+
+    # Write out an index file, or update it
+    regulation_index_csv_flname = os.path.join(
+        regulation_storage_path, "metadata.csv"
+    )
+    if os.path.exists(regulation_index_csv_flname):
+        # The file exists, so we have to do line comparisons
+        disk_dict = {}
+        with open(regulation_index_csv_flname, mode="r", encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                disk_dict[row['abbreviation']] = row
+        for reg_abbrev, reg_definition in regulation_dict.items():
+            if reg_abbrev not in disk_dict:
+                disk_dict[reg_abbrev] = reg_definition
+        with open(regulation_index_csv_flname, mode='w', encoding='utf-8') as csvfile:
+            fieldnames = ['abbreviation', 'title', 'href', 'directory',
+                          'regulation_effective_date', 'last_download_date']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames, restval='')
+            writer.writeheader()
+            for reg_abbrev, reg_definition in disk_dict.items():
+                writer.writerow(reg_definition)
+    else:
+        # The file does not exist, so we can just write out the csv.
+        with open(regulation_index_csv_flname, mode="w", encoding='utf-8') as csvfile:
+            fieldnames = ['abbreviation', 'title', 'href', 'directory',
+                          'regulation_effective_date', 'last_download_date']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames, restval='')
+            writer.writeheader()
+            for reg_abbrev, reg_definition in regulation_dict.items():
+                writer.writerow(reg_definition)
+
+    # print(regulation_dict)
+                
+def update_documents() -> None:
+    NotImplemented
 
 def main() -> None:
     """Runs tests for the doc retriever"""
     logger.setLevel(logging.DEBUG)
-    download_documents()
+    download_documents_index()
+    update_documents()
 
 
 if __name__ == "__main__":
