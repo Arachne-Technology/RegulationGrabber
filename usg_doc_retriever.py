@@ -22,7 +22,7 @@ from bs4 import BeautifulSoup
 
 
 # Setup
-logging.basicConfig(level=logging.DEBUG) # REMOVE ME LATER
+logging.basicConfig(level=logging.DEBUG, filename='logs.txt', filemode='w') # REMOVE ME LATER
 logger = logging.getLogger(__name__)
 
 def get_environment_config() -> dict[str, str]:
@@ -90,6 +90,11 @@ def write_regulation_dict(regulation_csv_file_path, regulation_dict) -> None:
                     reg_definition_copy['regulation_effective_date'] = datetime.strftime(
                         reg_definition_copy['regulation_effective_date'],"%Y-%m-%d"
                     )
+            if 'last_download_date' in reg_definition_copy:
+                if isinstance(reg_definition_copy['last_download_date'],datetime):
+                    reg_definition_copy['last_download_date'] = datetime.strftime(
+                        reg_definition_copy['last_download_date'],"%Y-%m-%d"
+                    )
             writer.writerow(reg_definition_copy)
 
 def read_regulation_dict(regulation_csv_file_path) -> dict[str,dict]:
@@ -102,6 +107,11 @@ def read_regulation_dict(regulation_csv_file_path) -> dict[str,dict]:
                 disk_dict[row['abbreviation']]['regulation_effective_date'] = \
                     datetime.strptime(
                         disk_dict[row['abbreviation']]['regulation_effective_date'],"%Y-%m-%d"
+                    )
+            if disk_dict[row['abbreviation']]['last_download_date'] != '':
+                disk_dict[row['abbreviation']]['last_download_date'] = \
+                    datetime.strptime(
+                        disk_dict[row['abbreviation']]['last_download_date'],"%Y-%m-%d"
                     )
     return disk_dict
 
@@ -153,7 +163,7 @@ def download_documents_index(regulation_storage_path, regulation_base_url,
             # Sanitize the abbreviations...
             'abbreviation': ''.join(char for char in regulation_link.text if char.isalnum())
         }
-        regulation_dict[regulation_link.text] = regulation_dict_entry
+        regulation_dict[regulation_dict_entry['abbreviation']] = regulation_dict_entry
         os.makedirs(regulation_dict_entry['directory'], exist_ok=True)
 
     # Write out an index file, or update it
@@ -172,7 +182,7 @@ def download_documents_index(regulation_storage_path, regulation_base_url,
 
     # print(regulation_dict)
 
-def update_documents(regulation_base_url, regulation_csv_file_path,
+def update_document_dates(regulation_base_url, regulation_csv_file_path,
                       **kwargs) -> None:
     regulation_dict = read_regulation_dict(regulation_csv_file_path=regulation_csv_file_path)
     for reg_abbrev, reg_definition in regulation_dict.items():
@@ -219,7 +229,7 @@ def update_documents(regulation_base_url, regulation_csv_file_path,
                         regulation_base_url, 
                         all_td[dita_idx].find_all('a')[0]['href']
                     )
-                    logger.debug("%s - %s - %s",reg_abbrev, effdate, dita_link)
+                    # logger.debug("%s - %s - %s",reg_abbrev, effdate, dita_link)
                     rightrow = False
         elif reg_abbrev == 'Chapter99CAS':
             ps = soup.find_all('p')
@@ -244,14 +254,124 @@ def update_documents(regulation_base_url, regulation_csv_file_path,
         write_regulation_dict(regulation_csv_file_path=regulation_csv_file_path, 
                               regulation_dict=regulation_dict)
 
+def safepath(s: str) -> str:
+    s = s.strip()
+    # remove Non-word characters
+    s = re.sub(r'[\N{EM DASH}\N{EN DASH}\N{HYPHEN}]','-',s) # replace all the dash lookalikes
+    s = re.sub(r' - ', '-', s) # space dash space replacement
+    s = re.sub(r'[^\w\s\.-]', '', s) # strip anything else
+    # remove runs of whitespace
+    s = re.sub(r'\s+','-',s)
+    # remove runs of double dashes
+    s = re.sub(r'\-\-+','-',s)
+    return s.upper()
+    
+def update_local_documents(regulation_csv_file_path, regulation_base_url, **kwargs) -> None:
+    regulation_dict = read_regulation_dict(regulation_csv_file_path=regulation_csv_file_path)
+    for reg_abbrev, reg_dictionary in regulation_dict.items():
+        if( reg_dictionary['last_download_date'] == '' or reg_dictionary['last_download_date'] < reg_dictionary['regulation_effective_date']):
+            # our local copy has either not been made, or is out of date.
+            logger.debug("Have to update %s", reg_abbrev)
+            
+            # open the file with soup
+            reg_index_flname = os.path.join(
+                reg_dictionary['directory'],
+                reg_abbrev + "_index.html"
+            )
+            with open(reg_index_flname, mode='r', encoding='utf-8') as htmlfile:
+                contents = htmlfile.read()
+            soup = BeautifulSoup(contents, 'lxml')
+            tablerows = soup.find_all('tr')
 
+            tablular1 = [
+                'FAR', 'DFARS', 'AFARS', 'DAFFARS', 'NMCARS', 'SOFARS', 'TRANSFARS',
+                'GSAMR', 'DARS', 'DLAD'
+            ]
+            nodeformat = [
+                'Chapter99CAS', 'AGAR', 'AIDAR', 'CAR', 'DEAR', 'DIAR', 'DOLAR', 'DOSAR', 'DTAR', 'EDAR', 'EPAAR', 'FEHBAR', 'HHSAR', 'HSAR', 'HUDAR', 'IAAR', 'JAR', 'LIFAR', 'NFS', 'NRCAR', 'TAR', 'VAAR'
+            ]
+            if reg_abbrev in tablular1:
+                for tablerow in tablerows:
+                    tabledata = tablerow.find_all('td')
+                    if len(tabledata) > 0:
+                        for tableelement in tabledata:
+                            for link in tableelement.find_all('a'):
+                                if 'title' in link.attrs:
+                                    match = re.match(r'print part (.+)', link['title'].lower())
+                                    if match:
+                                        flname = os.path.join(reg_dictionary['directory'], 'pages', reg_abbrev + '-' + safepath(match.group(1)) + '.html')
+                                        if(not os.path.exists(os.path.dirname(flname))):
+                                            os.mkdir(os.path.dirname(flname))
+                                        dlurl = urljoin(regulation_base_url, link['href'])
+                                        logger.debug('Found section - %s-%s : %s', reg_abbrev, flname, dlurl)
+                                        urlretrieve(dlurl, flname)
+                reg_dictionary['last_download_date'] = datetime.now()
+
+            elif reg_abbrev in nodeformat:
+                for tablerow in tablerows:
+                    tabledata = tablerow.find_all('td')
+                    if len(tabledata) > 0:
+                        partid = ''
+                        for tableelement in tabledata:
+                            if tableelement.text.strip() != '':
+                                match = re.match(r'part[s]* (\d+[\-]*.+)', tableelement.text.strip().lower())
+                                if match:
+                                    partid = match.group(1)
+                                else:
+                                    match = re.match(r'append[\S]*\s+(.+)',tableelement.text.strip().lower())
+                                    if match:
+                                        partid = match.group(0)
+                            for link in tableelement.find_all('a'):
+                                if 'title' in link.attrs:
+                                    match = re.match(r'print node .+', link['title'].lower())
+                                    if match:
+                                        flname = os.path.join(reg_dictionary['directory'], 'pages', reg_abbrev + '-' + safepath(partid) + '.html')
+                                        if(not os.path.exists(os.path.dirname(flname))):
+                                            os.mkdir(os.path.dirname(flname))
+                                        dlurl = urljoin(regulation_base_url, link['href'])
+                                        logger.debug('Found section - %s-%s : %s', reg_abbrev, flname, dlurl)
+                reg_dictionary['last_download_date'] = datetime.now()
+            elif reg_abbrev == 'DFARSPGI':
+                for tablerow in tablerows:
+                    tabledata = tablerow.find_all('td')
+                    if len(tabledata) > 0:
+                        for tableelement in tabledata:
+                            for link in tableelement.find_all('a'):
+                                if 'title' in link.attrs:
+                                    match = re.match(r'Print PGI Part (.+)', link['title'])
+                                    if match:
+                                        flname = os.path.join(reg_dictionary['directory'], 'pages', reg_abbrev + '-' + safepath(match.group(1)) + '.html')
+                                        if(not os.path.exists(os.path.dirname(flname))):
+                                            os.mkdir(os.path.dirname(flname))
+                                        dlurl = urljoin(regulation_base_url, link['href'])
+                                        logger.debug('Found section - %s-%s : %s', reg_abbrev, flname, dlurl)
+                reg_dictionary['last_download_date'] = datetime.now()
+            elif reg_abbrev == 'DAFFARSMP':
+                for tablerow in tablerows:
+                    tabledata = tablerow.find_all('td')
+                    if len(tabledata) > 0:
+                        for tableelement in tabledata:
+                            for link in tableelement.find_all('a'):
+                                if 'title' in link.attrs:
+                                    match = re.match(r'Print (.+)', link['title'])
+                                    if match:
+                                        flname =  os.path.join(reg_dictionary['directory'], 'pages', reg_abbrev + '-' + safepath(match.group(1)) + '.html')
+                                        if(not os.path.exists(os.path.dirname(flname))):
+                                            os.mkdir(os.path.dirname(flname))
+                                        dlurl = urljoin(regulation_base_url, link['href'])
+                                        logger.debug('Found section - %s-%s : %s', reg_abbrev, flname, dlurl)
+                reg_dictionary['last_download_date'] = datetime.now()
+        else:
+            logger.debug("Regulation %s is already at latest version - no updates to do", reg_abbrev)
+    write_regulation_dict(regulation_csv_file_path=regulation_csv_file_path, regulation_dict=regulation_dict)
 
 def main() -> None:
     """Runs tests for the doc retriever"""
     logger.setLevel(logging.DEBUG)
     envconf = get_environment_config()
     download_documents_index(**envconf)
-    update_documents(**envconf)
+    update_document_dates(**envconf)
+    update_local_documents(**envconf)
 
 
 if __name__ == "__main__":
