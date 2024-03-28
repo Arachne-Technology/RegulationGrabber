@@ -5,3 +5,4 @@
 chroma_db/
 temp/
 raw_regulations/
+*.csv

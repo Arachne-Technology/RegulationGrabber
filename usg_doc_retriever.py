@@ -31,6 +31,7 @@ def get_environment_config() -> dict[str, str]:
     'regulation_storage_path'
     'regulation_base_url'
     'temp_dir'
+    'regulation_csv_file_path'
     """
 
     # Open up the configuration
@@ -65,9 +66,34 @@ def get_environment_config() -> dict[str, str]:
         retval['temp_dir'] = "temp"
     logger.debug("Temp file path: %s", os.path.abspath(retval['temp_dir']))
 
+    try:
+        retval['regulation_csv_file_path'] = os.path.abspath(parser.get("Local", "Regulation_CSV_File"))
+    except ConfigParserError:
+        # Catch all configparser errors:
+        logger.error("Missing Configuration Item for CSV File path: Local -> Regulation_CSV_File")
+        retval['regulation_csv_file_path'] = os.path.abspath('regulations.csv') # default value
+    logger.debug("CSV file: %s", retval['regulation_csv_file_path'])
     return retval
 
-def download_documents_index(regulation_storage_path, regulation_base_url, temp_dir) -> None:
+def write_regulation_dict(regulation_csv_file_path, regulation_dict) -> None:
+    with open(regulation_csv_file_path, mode="w", encoding='utf-8') as csvfile:
+        fieldnames = ['abbreviation', 'title', 'href', 'directory',
+                        'regulation_effective_date', 'last_download_date']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, restval='')
+        writer.writeheader()
+        for reg_abbrev, reg_definition in regulation_dict.items():
+            writer.writerow(reg_definition)
+
+def read_regulation_dict(regulation_csv_file_path) -> dict[str,dict]:
+    disk_dict = {}
+    with open(regulation_csv_file_path, mode='r', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            disk_dict[row['abbreviation']] = row
+    return disk_dict
+
+def download_documents_index(regulation_storage_path, regulation_base_url, 
+                             temp_dir, regulation_csv_file_path, **kwargs) -> None:
     """US Gov. Doc Retriever
 
     Goes to the Acquisition website, and downloads the latest copies
@@ -117,43 +143,27 @@ def download_documents_index(regulation_storage_path, regulation_base_url, temp_
         os.makedirs(regulation_dict_entry['directory'], exist_ok=True)
 
     # Write out an index file, or update it
-    regulation_index_csv_flname = os.path.join(
-        regulation_storage_path, "metadata.csv"
-    )
-    if os.path.exists(regulation_index_csv_flname):
+    if os.path.exists(regulation_csv_file_path):
         # The file exists, so we have to do line comparisons
-        disk_dict = {}
-        with open(regulation_index_csv_flname, mode="r", encoding='utf-8') as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                disk_dict[row['abbreviation']] = row
+        disk_dict = read_regulation_dict(regulation_csv_file_path=regulation_csv_file_path)
         for reg_abbrev, reg_definition in regulation_dict.items():
             if reg_abbrev not in disk_dict:
                 disk_dict[reg_abbrev] = reg_definition
-        with open(regulation_index_csv_flname, mode='w', encoding='utf-8') as csvfile:
-            fieldnames = ['abbreviation', 'title', 'href', 'directory',
-                          'regulation_effective_date', 'last_download_date']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames, restval='')
-            writer.writeheader()
-            for reg_abbrev, reg_definition in disk_dict.items():
-                writer.writerow(reg_definition)
+        write_regulation_dict(regulation_csv_file_path=regulation_csv_file_path,
+                              regulation_dict=disk_dict)
     else:
         # The file does not exist, so we can just write out the csv.
-        with open(regulation_index_csv_flname, mode="w", encoding='utf-8') as csvfile:
-            fieldnames = ['abbreviation', 'title', 'href', 'directory',
-                          'regulation_effective_date', 'last_download_date']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames, restval='')
-            writer.writeheader()
-            for reg_abbrev, reg_definition in regulation_dict.items():
-                writer.writerow(reg_definition)
+        write_regulation_dict(regulation_csv_file_path=regulation_csv_file_path,
+                              regulation_dict=regulation_dict)
 
     # print(regulation_dict)
-                
-def update_documents(regulation_storage_path, regulation_base_url, temp_dir) -> None:
-    regulation_index_csv_filename = os.path.join(
-        regulation_storage_path, "metadata.csv"
-    )
+
+def update_documents(regulation_storage_path, regulation_csv_file_path,
+                      **kwargs) -> None:
+    regulation_dict = read_regulation_dict(regulation_csv_file_path=regulation_csv_file_path)
     
+
+
 
 def main() -> None:
     """Runs tests for the doc retriever"""
