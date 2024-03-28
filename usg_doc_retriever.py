@@ -13,6 +13,7 @@ from urllib.request import urlretrieve
 from urllib.parse import urljoin
 import re
 import csv
+from datetime import datetime
 
 # Imports - Third Party
 from bs4 import BeautifulSoup
@@ -82,7 +83,14 @@ def write_regulation_dict(regulation_csv_file_path, regulation_dict) -> None:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames, restval='')
         writer.writeheader()
         for reg_abbrev, reg_definition in regulation_dict.items():
-            writer.writerow(reg_definition)
+            # don't want to mess up the original
+            reg_definition_copy = reg_definition.copy()
+            if 'regulation_effective_date' in reg_definition_copy:
+                if isinstance(reg_definition_copy['regulation_effective_date'],datetime):
+                    reg_definition_copy['regulation_effective_date'] = datetime.strftime(
+                        reg_definition_copy['regulation_effective_date'],"%Y-%m-%d"
+                    )
+            writer.writerow(reg_definition_copy)
 
 def read_regulation_dict(regulation_csv_file_path) -> dict[str,dict]:
     disk_dict = {}
@@ -90,6 +98,11 @@ def read_regulation_dict(regulation_csv_file_path) -> dict[str,dict]:
         reader = csv.DictReader(csvfile)
         for row in reader:
             disk_dict[row['abbreviation']] = row
+            if disk_dict[row['abbreviation']]['regulation_effective_date'] != '':
+                disk_dict[row['abbreviation']]['regulation_effective_date'] = \
+                    datetime.strptime(
+                        disk_dict[row['abbreviation']]['regulation_effective_date'],"%Y-%m-%d"
+                    )
     return disk_dict
 
 def download_documents_index(regulation_storage_path, regulation_base_url, 
@@ -137,7 +150,8 @@ def download_documents_index(regulation_storage_path, regulation_base_url,
                 os.path.abspath(regulation_storage_path), 
                 regulation_link['href'][1:]
             ),
-            'abbreviation': regulation_link.text
+            # Sanitize the abbreviations...
+            'abbreviation': ''.join(char for char in regulation_link.text if char.isalnum())
         }
         regulation_dict[regulation_link.text] = regulation_dict_entry
         os.makedirs(regulation_dict_entry['directory'], exist_ok=True)
@@ -158,10 +172,77 @@ def download_documents_index(regulation_storage_path, regulation_base_url,
 
     # print(regulation_dict)
 
-def update_documents(regulation_storage_path, regulation_csv_file_path,
+def update_documents(regulation_base_url, regulation_csv_file_path,
                       **kwargs) -> None:
     regulation_dict = read_regulation_dict(regulation_csv_file_path=regulation_csv_file_path)
-    
+    for reg_abbrev, reg_definition in regulation_dict.items():
+        # grab the index page, to see if the effective date is newer
+        reg_index_flname = os.path.join(
+            reg_definition['directory'],
+            reg_abbrev + "_index.html"
+        )
+        urlretrieve(reg_definition['href'], filename=reg_index_flname)
+        with open(reg_index_flname, mode='r', encoding='utf-8') as htmlfile:
+            contents = htmlfile.read()
+        soup = BeautifulSoup(contents, 'lxml')
+        
+        tabularformat = [
+            'FAR','DFARS','DFARSPGI','AFARS','DAFFARS','DAFFARSMP',
+            'DARS','DLAD','NMCARS','SOFARS','TRANSFARS', 'GSAMR'
+        ]
+        h4format = [
+            'AGAR', 'AIDAR', 'CAR', 'DEAR', 'DIAR', 'DOLAR', 'DOSAR',
+            'DTAR', 'EDAR', 'EPAAR', 'FEHBAR', 'HHSAR', "HSAR", 'HUDAR',
+            'IAAR', 'JAR', 'LIFAR', 'NFS', 'NRCAR', 'TAR', 'VAAR'
+        ]
+        if  reg_abbrev in tabularformat:
+            rightrow = False
+            for tr in soup.find_all('tr'):
+                all_th = tr.find_all('th')
+                if all_th:
+                    try:
+                        all_heads = [th.text for th in all_th]
+                        date_idx = all_heads.index('Effective Date')
+                        dita_idx = all_heads.index('DITA')
+                        rightrow = True
+                        continue
+                    except Exception:
+                        # wrong row
+                        continue
+                if rightrow:
+                    all_td = tr.find_all('td')
+                    effdate = datetime.strptime(
+                        all_td[date_idx].text,
+                        "%m/%d/%Y"
+                    )
+                    dita_link = urljoin(
+                        regulation_base_url, 
+                        all_td[dita_idx].find_all('a')[0]['href']
+                    )
+                    logger.debug("%s - %s - %s",reg_abbrev, effdate, dita_link)
+                    rightrow = False
+        elif reg_abbrev == 'Chapter99CAS':
+            ps = soup.find_all('p')
+            for p in ps:
+                match = re.search(r'Last Update: (\d{2}.+\d{4})', p.text)
+                if match:
+                    effdate = datetime.strptime(match.group(1), "%d %B %Y")
+        elif reg_abbrev in h4format:
+            date_candidates = soup.select('#effective-date')
+            for candidate in date_candidates:
+                matches = re.search(r'\d{2}/\d{2}/\d{4}', candidate.text)
+                if matches:
+                    effdate = datetime.strptime(
+                        matches.group(0),
+                        "%m/%d/%Y"
+                    )
+        else:
+            logger.error("Unrecognized regulation format: %s",reg_abbrev)
+        # print(reg_abbrev, effdate)
+        # regulation_dict[reg_abbrev]['regulation_effective_date'] = effdate
+        reg_definition['regulation_effective_date'] = effdate
+        write_regulation_dict(regulation_csv_file_path=regulation_csv_file_path, 
+                              regulation_dict=regulation_dict)
 
 
 
