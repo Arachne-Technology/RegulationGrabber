@@ -14,6 +14,7 @@ import csv
 from datetime import datetime
 import glob
 import json
+import jsonlines
 
 # Imports - Third Party
 from bs4 import BeautifulSoup
@@ -55,6 +56,10 @@ def simplify_documents(Regulation_CSV_File):
             parseflname = os.path.join(
                 parse_folder, os.path.splitext(os.path.basename(file))[0] + ".json"
             )
+            linesflname = os.path.join(
+                parse_folder, os.path.splitext(os.path.basename(file))[0] + ".jsonl"
+            )
+            lineslist = []
             with open(
                 parseflname,
                 mode="w",
@@ -110,11 +115,27 @@ def simplify_documents(Regulation_CSV_File):
                                 heading_contents_dict[current_heading] += (
                                     os.linesep + current_paragraph
                                 )
+                                lineslist[-1]["content"] = (
+                                    lineslist[-1]["content"]
+                                    + os.linesep
+                                    + current_paragraph
+                                )
                             else:
                                 heading_contents_dict[current_heading] = (
                                     current_paragraph
                                 )
+                                lineslist.append(
+                                    {
+                                        "doctitle": heading_contents_dict["doctitle"],
+                                        "title": current_title,
+                                        "heading": current_heading,
+                                        "content": current_paragraph,
+                                    }
+                                )
+
                 json.dump(heading_contents_dict, outfile)
+            with jsonlines.open(linesflname, mode="w") as outfile:
+                outfile.write_all(lineslist)
 
             htmlflname = os.path.join(
                 parse_folder, os.path.splitext(os.path.basename(file))[0] + ".html"
