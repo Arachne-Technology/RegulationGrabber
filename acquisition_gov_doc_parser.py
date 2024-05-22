@@ -92,6 +92,8 @@ def simplify_documents(Regulation_CSV_File):
                         reg_abbreviation + " " + safestring(str(soup.title.string))
                     )
                 heading_contents_dict["doctitle"] = current_title
+                heading_contents_dict["regulation_abbreviation"] = reg_abbreviation
+                heading_contents_dict["regulation_name"] = reg_dictionary["title"]
                 current_heading = ""
                 current_paragraph = ""
                 for tag in soup.find_all():
@@ -126,6 +128,12 @@ def simplify_documents(Regulation_CSV_File):
                                 )
                                 lineslist.append(
                                     {
+                                        "reg_abbreviation": heading_contents_dict[
+                                            "regulation_abbreviation"
+                                        ],
+                                        "reg_name": heading_contents_dict[
+                                            "regulation_name"
+                                        ],
                                         "doctitle": heading_contents_dict["doctitle"],
                                         "title": current_title,
                                         "heading": current_heading,
