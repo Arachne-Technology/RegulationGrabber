@@ -7,3 +7,4 @@ temp/
 raw_regulations/
 *.csv
 logs.txt
+__pycache__/
